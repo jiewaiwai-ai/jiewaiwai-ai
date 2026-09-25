@@ -45,10 +45,17 @@
     border-radius: 16px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 3px #ffd70033;
     overflow: hidden;
-    touch-action: none;
   }
 
-  canvas { display: block; cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='12' fill='none' stroke='white' stroke-width='3'/></svg>") 16 16, crosshair; }
+  canvas { display: block; }
+
+  /* 刮奖涂层：叠加在票面之上，擦除后露出下层票面 */
+  #scratch {
+    position: absolute;
+    top: 0; left: 0;
+    cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='12' fill='none' stroke='white' stroke-width='3'/></svg>") 16 16, crosshair;
+    touch-action: none;
+  }
 
   .message {
     min-height: 2rem;
@@ -102,6 +109,7 @@
 </div>
 
 <div class="ticket">
+  <canvas id="ticketCanvas"></canvas>
   <canvas id="scratch"></canvas>
 </div>
 
@@ -114,12 +122,16 @@ const PRICE = 2;
 const SYMBOLS = ["🍎", "🍋", "🍇", "⭐", "💎", "7️⃣"];
 const WIN_WEIGHTS = { "🍎": 2, "🍋": 4, "🍇": 8, "⭐": 15, "💎": 30, "7️⃣": 60 };
 
+const TICKET_W = 360, TICKET_H = 420;
+const COAT_H = 260;               // 涂层覆盖区域高度（网格区）
+const COLS = 3, ROWS = 3;
+const CELL_W = TICKET_W / COLS, CELL_H = 200 / ROWS;
+
+const ticketCanvas = document.getElementById("ticketCanvas");
+const tctx = ticketCanvas.getContext("2d");
 const canvas = document.getElementById("scratch");
 const ctx = canvas.getContext("2d");
 const messageEl = document.getElementById("message");
-const TICKET_W = 360, TICKET_H = 420;
-const COLS = 3, ROWS = 3;
-const CELL_W = TICKET_W / COLS, CELL_H = 200 / ROWS;
 
 let grid = [];          // 3x3 图案
 let line = null;        // 中奖连线
@@ -129,10 +141,13 @@ let stats = { count: 0, wins: 0, spent: 0, earned: 0 };
 
 function setupCanvas() {
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = TICKET_W * dpr;
-  canvas.height = TICKET_H * dpr;
-  canvas.style.width = TICKET_W + "px";
-  canvas.style.height = TICKET_H + "px";
+  for (const [cv, h] of [[ticketCanvas, TICKET_H], [canvas, COAT_H]]) {
+    cv.width = TICKET_W * dpr;
+    cv.height = h * dpr;
+    cv.style.width = TICKET_W + "px";
+    cv.style.height = h + "px";
+  }
+  tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
@@ -161,80 +176,78 @@ function newTicket() {
   drawCoating();
 }
 
-// 底层：图案 + 网格线 + 标题
+// 下层票面：图案 + 网格线 + 标题（这张画布永不被擦除）
 function drawTicket() {
-  const g = ctx.createLinearGradient(0, 0, 0, 260);
+  const g = tctx.createLinearGradient(0, 0, 0, 260);
   g.addColorStop(0, "#fff8e1");
   g.addColorStop(1, "#ffecb3");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, TICKET_W, 260);
+  tctx.fillStyle = g;
+  tctx.fillRect(0, 0, TICKET_W, 260);
 
-  ctx.fillStyle = "#c62828";
-  ctx.font = "bold 22px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("🎉 幸运刮刮乐 🎉", TICKET_W / 2, 34);
+  tctx.fillStyle = "#c62828";
+  tctx.font = "bold 22px sans-serif";
+  tctx.textAlign = "center";
+  tctx.fillText("🎉 幸运刮刮乐 🎉", TICKET_W / 2, 34);
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const x = c * CELL_W, y = 50 + r * CELL_H;
-      ctx.fillStyle = (r + c) % 2 ? "#ffecb3" : "#fff8e1";
-      ctx.fillRect(x, y, CELL_W, CELL_H);
-      ctx.font = "44px sans-serif";
-      ctx.fillText(grid[r][c], x + CELL_W / 2, y + CELL_H / 2 + 16);
+      tctx.fillStyle = (r + c) % 2 ? "#ffecb3" : "#fff8e1";
+      tctx.fillRect(x, y, CELL_W, CELL_H);
+      tctx.font = "44px sans-serif";
+      tctx.fillText(grid[r][c], x + CELL_W / 2, y + CELL_H / 2 + 16);
     }
   }
 
-  ctx.strokeStyle = "#c6282855";
-  ctx.lineWidth = 2;
+  tctx.strokeStyle = "#c6282855";
+  tctx.lineWidth = 2;
   for (let r = 0; r <= ROWS; r++) {
-    ctx.beginPath(); ctx.moveTo(0, 50 + r * CELL_H); ctx.lineTo(TICKET_W, 50 + r * CELL_H); ctx.stroke();
+    tctx.beginPath(); tctx.moveTo(0, 50 + r * CELL_H); tctx.lineTo(TICKET_W, 50 + r * CELL_H); tctx.stroke();
   }
   for (let c = 0; c <= COLS; c++) {
-    ctx.beginPath(); ctx.moveTo(c * CELL_W, 50); ctx.lineTo(c * CELL_W, 260); ctx.stroke();
+    tctx.beginPath(); tctx.moveTo(c * CELL_W, 50); tctx.lineTo(c * CELL_W, 260); tctx.stroke();
   }
 
   // 底部信息区
-  ctx.fillStyle = "#8d0801";
-  ctx.fillRect(0, 260, TICKET_W, TICKET_H - 260);
-  ctx.fillStyle = "#ffd700";
-  ctx.font = "bold 16px sans-serif";
-  ctx.fillText("¥" + PRICE + " / 张  ·  最高奖金 ¥120", TICKET_W / 2, 300);
-  ctx.font = "13px sans-serif";
-  ctx.fillStyle = "#ffffffaa";
-  ctx.fillText("三联图案即中奖 · 本彩票最终解释权归运气所有", TICKET_W / 2, 330);
+  tctx.fillStyle = "#8d0801";
+  tctx.fillRect(0, 260, TICKET_W, TICKET_H - 260);
+  tctx.fillStyle = "#ffd700";
+  tctx.font = "bold 16px sans-serif";
+  tctx.fillText("¥" + PRICE + " / 张  ·  最高奖金 ¥120", TICKET_W / 2, 300);
+  tctx.font = "13px sans-serif";
+  tctx.fillStyle = "#ffffffaa";
+  tctx.fillText("三联图案即中奖 · 本彩票最终解释权归运气所有", TICKET_W / 2, 330);
 
   // 中奖时画连线
   if (line) {
-    ctx.strokeStyle = "#e53935";
-    ctx.lineWidth = 6;
-    ctx.lineCap = "round";
+    tctx.strokeStyle = "#e53935";
+    tctx.lineWidth = 6;
+    tctx.lineCap = "round";
     const pt = ([r, c]) => [c * CELL_W + CELL_W / 2, 50 + r * CELL_H + CELL_H / 2];
-    ctx.beginPath();
-    ctx.moveTo(...pt(line[0]));
-    ctx.lineTo(...pt(line[2]));
-    ctx.stroke();
+    tctx.beginPath();
+    tctx.moveTo(...pt(line[0]));
+    tctx.lineTo(...pt(line[2]));
+    tctx.stroke();
   }
 }
 
-// 刮奖涂层
+// 上层刮奖涂层（独立画布，擦除后露出下层票面）
 function drawCoating() {
-  const g = ctx.createLinearGradient(0, 0, TICKET_W, TICKET_H);
+  const g = ctx.createLinearGradient(0, 0, TICKET_W, COAT_H);
   g.addColorStop(0, "#9e9e9e");
   g.addColorStop(0.5, "#bdbdbd");
   g.addColorStop(1, "#8d8d8d");
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, TICKET_W, 260);
+  ctx.fillRect(0, 0, TICKET_W, COAT_H);
 
   ctx.fillStyle = "#ffffff55";
   ctx.font = "bold 26px sans-serif";
   ctx.textAlign = "center";
   ctx.save();
-  ctx.translate(TICKET_W / 2, 155);
+  ctx.translate(TICKET_W / 2, COAT_H / 2);
   ctx.rotate(-0.2);
   ctx.fillText("刮 开 涂 层", 0, 0);
   ctx.restore();
-
-  ctx.globalCompositeOperation = "source-over";
 }
 
 function scratchAt(x, y) {
@@ -245,9 +258,9 @@ function scratchAt(x, y) {
   ctx.globalCompositeOperation = "source-over";
 }
 
-// 计算已刮开比例（只统计涂层区域）
+// 计算已刮开比例（只统计涂层画布）
 function scratchedRatio() {
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height * 260 / TICKET_H).data;
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
   let clear = 0, total = 0;
   for (let i = 3; i < img.length; i += 16 * 4) { // 抽样加速
     total++;
@@ -275,11 +288,8 @@ function checkResult() {
     messageEl.className = "message lose";
   }
   updateStats();
-  // 清除剩余涂层，直接揭晓
-  setTimeout(() => {
-    ctx.clearRect(0, 0, TICKET_W, 260);
-    drawTicket();
-  }, 900);
+  // 清除剩余涂层，直接揭晓（下层票面一直未被破坏）
+  setTimeout(() => ctx.clearRect(0, 0, TICKET_W, COAT_H), 900);
 }
 
 function updateStats() {
