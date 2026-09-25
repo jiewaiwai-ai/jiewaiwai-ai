@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>🎫 刮刮乐彩票</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    padding: 20px;
+    overflow-x: hidden;
+  }
+
+  h1 {
+    font-size: 2rem;
+    margin-bottom: 6px;
+    background: linear-gradient(90deg, #ffd700, #ff6b6b, #ffd700);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-size: 200% auto;
+    animation: shine 3s linear infinite;
+  }
+  @keyframes shine { to { background-position: 200% center; } }
+
+  .stats {
+    display: flex;
+    gap: 24px;
+    margin: 12px 0 18px;
+    font-size: 0.95rem;
+  }
+  .stats span { opacity: 0.85; }
+  .stats b { color: #ffd700; }
+
+  .ticket {
+    position: relative;
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 0 0 3px #ffd70033;
+    overflow: hidden;
+    touch-action: none;
+  }
+
+  canvas { display: block; cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><circle cx='16' cy='16' r='12' fill='none' stroke='white' stroke-width='3'/></svg>") 16 16, crosshair; }
+
+  .message {
+    min-height: 2rem;
+    margin-top: 16px;
+    font-size: 1.3rem;
+    font-weight: bold;
+    text-align: center;
+  }
+  .win  { color: #ffd700; text-shadow: 0 0 20px #ffd70088; animation: pop 0.5s ease; }
+  .lose { color: #aaa; }
+  @keyframes pop { 0% { transform: scale(0.5); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
+  button {
+    margin-top: 14px;
+    padding: 12px 36px;
+    font-size: 1.05rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ffd700, #ff9500);
+    color: #4a2c00;
+    cursor: pointer;
+    box-shadow: 0 4px 15px #ffd70055;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px #ffd70088; }
+  button:active { transform: translateY(0); }
+
+  .hint { margin-top: 10px; font-size: 0.8rem; opacity: 0.5; }
+
+  /* 彩带 */
+  .confetti {
+    position: fixed;
+    top: -10px;
+    font-size: 20px;
+    animation: fall linear forwards;
+    pointer-events: none;
+    z-index: 99;
+  }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+</style>
+</head>
+<body>
+
+<h1>🎫 幸运刮刮乐</h1>
+<div class="stats">
+  <span>已刮 <b id="count">0</b> 张</span>
+  <span>中奖 <b id="wins">0</b> 次</span>
+  <span>花费 <b id="spent">0</b> 元</span>
+  <span>回本 <b id="earned">0</b> 元</span>
+</div>
+
+<div class="ticket">
+  <canvas id="scratch"></canvas>
+</div>
+
+<div class="message" id="message">按住涂层开始刮奖 ✨</div>
+<button id="newBtn">🎫 再来一张（2元）</button>
+<div class="hint">中奖规则：横、竖、斜任意三个相同图案连成一线即中奖</div>
+
+<script>
+const PRICE = 2;
+const SYMBOLS = ["🍎", "🍋", "🍇", "⭐", "💎", "7️⃣"];
+const WIN_WEIGHTS = { "🍎": 2, "🍋": 4, "🍇": 8, "⭐": 15, "💎": 30, "7️⃣": 60 };
+
+const canvas = document.getElementById("scratch");
+const ctx = canvas.getContext("2d");
+const messageEl = document.getElementById("message");
+const TICKET_W = 360, TICKET_H = 420;
+const COLS = 3, ROWS = 3;
+const CELL_W = TICKET_W / COLS, CELL_H = 200 / ROWS;
+
+let grid = [];          // 3x3 图案
+let line = null;        // 中奖连线
+let scratching = false;
+let finished = false;
+let stats = { count: 0, wins: 0, spent: 0, earned: 0 };
+
+function setupCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = TICKET_W * dpr;
+  canvas.height = TICKET_H * dpr;
+  canvas.style.width = TICKET_W + "px";
+  canvas.style.height = TICKET_H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// 生成新彩票：约 25% 概率中奖（指定一条线，其余随机打乱）
+function newTicket() {
+  grid = Array.from({ length: ROWS }, () =>
+    Array.from({ length: COLS }, () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)])
+  );
+  line = null;
+  finished = false;
+  messageEl.textContent = "按住涂层开始刮奖 ✨";
+  messageEl.className = "message";
+
+  if (Math.random() < 0.25) {
+    const lines = [
+      [[0,0],[0,1],[0,2]], [[1,0],[1,1],[1,2]], [[2,0],[2,1],[2,2]],
+      [[0,0],[1,0],[2,0]], [[0,1],[1,1],[2,1]], [[0,2],[1,2],[2,2]],
+      [[0,0],[1,1],[2,2]], [[0,2],[1,1],[2,0]],
+    ];
+    line = lines[Math.floor(Math.random() * lines.length)];
+    const sym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
+    line.forEach(([r, c]) => grid[r][c] = sym);
+  }
+
+  drawTicket();
+  drawCoating();
+}
+
+// 底层：图案 + 网格线 + 标题
+function drawTicket() {
+  const g = ctx.createLinearGradient(0, 0, 0, 260);
+  g.addColorStop(0, "#fff8e1");
+  g.addColorStop(1, "#ffecb3");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, TICKET_W, 260);
+
+  ctx.fillStyle = "#c62828";
+  ctx.font = "bold 22px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("🎉 幸运刮刮乐 🎉", TICKET_W / 2, 34);
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = c * CELL_W, y = 50 + r * CELL_H;
+      ctx.fillStyle = (r + c) % 2 ? "#ffecb3" : "#fff8e1";
+      ctx.fillRect(x, y, CELL_W, CELL_H);
+      ctx.font = "44px sans-serif";
+      ctx.fillText(grid[r][c], x + CELL_W / 2, y + CELL_H / 2 + 16);
+    }
+  }
+
+  ctx.strokeStyle = "#c6282855";
+  ctx.lineWidth = 2;
+  for (let r = 0; r <= ROWS; r++) {
+    ctx.beginPath(); ctx.moveTo(0, 50 + r * CELL_H); ctx.lineTo(TICKET_W, 50 + r * CELL_H); ctx.stroke();
+  }
+  for (let c = 0; c <= COLS; c++) {
+    ctx.beginPath(); ctx.moveTo(c * CELL_W, 50); ctx.lineTo(c * CELL_W, 260); ctx.stroke();
+  }
+
+  // 底部信息区
+  ctx.fillStyle = "#8d0801";
+  ctx.fillRect(0, 260, TICKET_W, TICKET_H - 260);
+  ctx.fillStyle = "#ffd700";
+  ctx.font = "bold 16px sans-serif";
+  ctx.fillText("¥" + PRICE + " / 张  ·  最高奖金 ¥120", TICKET_W / 2, 300);
+  ctx.font = "13px sans-serif";
+  ctx.fillStyle = "#ffffffaa";
+  ctx.fillText("三联图案即中奖 · 本彩票最终解释权归运气所有", TICKET_W / 2, 330);
+
+  // 中奖时画连线
+  if (line) {
+    ctx.strokeStyle = "#e53935";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    const pt = ([r, c]) => [c * CELL_W + CELL_W / 2, 50 + r * CELL_H + CELL_H / 2];
+    ctx.beginPath();
+    ctx.moveTo(...pt(line[0]));
+    ctx.lineTo(...pt(line[2]));
+    ctx.stroke();
+  }
+}
+
+// 刮奖涂层
+function drawCoating() {
+  const g = ctx.createLinearGradient(0, 0, TICKET_W, TICKET_H);
+  g.addColorStop(0, "#9e9e9e");
+  g.addColorStop(0.5, "#bdbdbd");
+  g.addColorStop(1, "#8d8d8d");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, TICKET_W, 260);
+
+  ctx.fillStyle = "#ffffff55";
+  ctx.font = "bold 26px sans-serif";
+  ctx.textAlign = "center";
+  ctx.save();
+  ctx.translate(TICKET_W / 2, 155);
+  ctx.rotate(-0.2);
+  ctx.fillText("刮 开 涂 层", 0, 0);
+  ctx.restore();
+
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function scratchAt(x, y) {
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  ctx.arc(x, y, 22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+}
+
+// 计算已刮开比例（只统计涂层区域）
+function scratchedRatio() {
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height * 260 / TICKET_H).data;
+  let clear = 0, total = 0;
+  for (let i = 3; i < img.length; i += 16 * 4) { // 抽样加速
+    total++;
+    if (img[i] === 0) clear++;
+  }
+  return clear / total;
+}
+
+function checkResult() {
+  if (finished) return;
+  finished = true;
+  stats.count++;
+  stats.spent += PRICE;
+  let prize = 0;
+  if (line) {
+    const sym = grid[line[0][0]][line[0][1]];
+    prize = (WIN_WEIGHTS[sym] || 5) * PRICE;
+    stats.wins++;
+    stats.earned += prize;
+    messageEl.textContent = `🎉 中奖啦！三个${sym}  赢得 ¥${prize}！`;
+    messageEl.className = "message win";
+    confetti();
+  } else {
+    messageEl.textContent = "😢 未中奖，再接再厉！";
+    messageEl.className = "message lose";
+  }
+  updateStats();
+  // 清除剩余涂层，直接揭晓
+  setTimeout(() => {
+    ctx.clearRect(0, 0, TICKET_W, 260);
+    drawTicket();
+  }, 900);
+}
+
+function updateStats() {
+  count.textContent = stats.count;
+  wins.textContent = stats.wins;
+  spent.textContent = stats.spent;
+  earned.textContent = stats.earned;
+}
+
+function confetti() {
+  const emojis = ["🎉", "🎊", "✨", "💰", "⭐"];
+  for (let i = 0; i < 40; i++) {
+    const el = document.createElement("div");
+    el.className = "confetti";
+    el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    el.style.left = Math.random() * 100 + "vw";
+    el.style.animationDuration = 1.5 + Math.random() * 2 + "s";
+    el.style.animationDelay = Math.random() * 0.8 + "s";
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 4500);
+  }
+}
+
+// 事件
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return [t.clientX - rect.left, t.clientY - rect.top];
+}
+
+function start(e) {
+  if (finished) return;
+  scratching = true;
+  scratchAt(...getPos(e));
+}
+function move(e) {
+  if (!scratching || finished) return;
+  e.preventDefault();
+  scratchAt(...getPos(e));
+}
+function end() {
+  if (!scratching || finished) { scratching = false; return; }
+  scratching = false;
+  if (scratchedRatio() > 0.45) checkResult();
+}
+
+canvas.addEventListener("mousedown", start);
+canvas.addEventListener("mousemove", move);
+window.addEventListener("mouseup", end);
+canvas.addEventListener("touchstart", start, { passive: true });
+canvas.addEventListener("touchmove", move, { passive: false });
+canvas.addEventListener("touchend", end);
+
+document.getElementById("newBtn").addEventListener("click", () => {
+  setupCanvas();
+  newTicket();
+});
+
+setupCanvas();
+newTicket();
+</script>
+</body>
+</html>
